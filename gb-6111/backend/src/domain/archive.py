@@ -53,3 +53,14 @@ def reexport(db, target, relation):
             f'ORDER BY {relation.columns[0]} COLLATE "C") TO STDOUT WITH (FORMAT CSV)'
         ) as copy:
             return Segment.capture(relation.key, b"".join(bytes(chunk) for chunk in copy))
+
+
+def __getattr__(name):
+    # 延迟导入避免 archive <-> volumes 的初始化循环，同时允许
+    # ``from src.domain.archive import pack_volumes`` 这类近义入口。
+    import importlib
+
+    volumes = importlib.import_module(".volumes", __package__)
+    if hasattr(volumes, name):
+        return getattr(volumes, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

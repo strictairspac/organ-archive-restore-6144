@@ -24,8 +24,15 @@ def service_one():
         if task is None:
             return False
         payload = db.scalar(select(cases.c.payload).where(cases.c.id == task["case_id"]))
+        if task.get("batch_id") and isinstance(payload, dict):
+            payload = {**payload, "batch_id": payload.get("batch_id") or task["batch_id"]}
         try:
-            result = scenario.run(payload, task["parameter"], db)
+            if task.get("capacity") is not None:
+                result = scenario.run(
+                    payload, task["parameter"], db, capacity=task["capacity"],
+                )
+            else:
+                result = scenario.run(payload, task["parameter"], db)
             output = {"status": JobState.DONE, "result": result, "digest": content_digest(result)}
         except Exception as exc:
             # Let the failed database transaction roll back before persisting the error.

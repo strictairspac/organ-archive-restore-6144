@@ -3,6 +3,7 @@ from sqlalchemy import text
 from .archive import apply_archive, damage_segment, export_selection, reexport
 from .fixtures import FIXTURES
 from .relations import RELATIONS, create_tables, validate, write_source
+from .volumes import OversizedRepairOrder, volume_to_jsonable
 
 
 CONFIG = {
@@ -22,11 +23,45 @@ CONFIG = {
 }
 
 
-def run(payload, parameter, db):
+def run(payload, parameter, db, capacity=None):
     validate(payload)
     source = create_tables(db, "source")
     write_source(db, source, payload)
     selected = payload["requested"][:parameter]
+    capacity = capacity if capacity is not None else payload.get("volume_capacity")
+    if capacity is None:
+        capacity = payload.get("capacity_bytes") or payload.get("max_bytes") or payload.get("capacity")
+    volume_plan = None
+    if capacity is not None:
+        # 按 PostgreSQL COPY 三段的真实字节贪心装卷；单单超容时形成阻断证据，
+        # 不导出/发出任何分卷。
+        from .volumes import plan_db_volumes
+
+        try:
+            volume_plan = plan_db_volumes(
+                db, source, selected, int(capacity), payload.get("batch_id") or payload.get("batch_code")
+            )
+        except OversizedRepairOrder as exc:
+            blocked_plan = exc.report or {}
+            return {
+                "outcome": "capacity_blocked",
+                "blocked": True,
+                "issued": False,
+                "summary": str(exc),
+                "oversized_visit_id": exc.visit_id,
+                "oversized_order_id": exc.visit_id,
+                "超限工单": exc.visit_id,
+                "metrics": {
+                    "入选工单": len(selected),
+                    "还原工单": 0,
+                    "损伤段": 0,
+                    "分卷数": 0,
+                    "卷容量字节": int(capacity),
+                },
+                "rows": [],
+                "volume_plan": blocked_plan,
+                "volumes": [],
+            }
     segments = damage_segment(export_selection(db, source, selected), payload.get("simulate_damage"))
     bad_segments = sum(not segment.verified() for segment in segments)
     target = None
@@ -54,8 +89,14 @@ def run(payload, parameter, db):
     )
     if target and any(row["核验"] != "确认" for row in rows):
         raise ValueError("复原后的 COPY 字节摘要与原归档不一致")
-    return {
+    result = {
         "summary": summary,
         "metrics": {"入选工单": len(selected), "还原工单": restored_visits, "损伤段": bad_segments},
         "rows": rows,
     }
+    if volume_plan is not None:
+        result["volume_plan"] = volume_to_jsonable(volume_plan)
+        result["volumes"] = result["volume_plan"]["volumes"]
+        result["metrics"]["分卷数"] = len(volume_plan)
+        result["metrics"]["卷容量字节"] = int(capacity)
+    return result

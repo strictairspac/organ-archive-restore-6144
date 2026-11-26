@@ -62,4 +62,16 @@ docker compose up -d --build --wait
 
 COPY 使用隔离临时表和应用层归档卷。覆盖数据恢复与依赖核验，整库 DDL、角色和 WAL 在范围之外。 当前界面用 JSON 编辑业务资料，以 JSON 下载证据。过程和截图保存在批次的 [验收记录](../../test-artifacts/gb-6111/TESTING.md)。
 
+## 容量分卷与收卷对账
+
+接收设备有字节容量上限时，使用 `backend/src/domain/volumes.py`：按请求顺序把「工单 + 该单全部测记 + 父琴体」贪心装卷，容量按每卷三段 COPY 兼容 CSV 的实际字节总和核算。琴体可在不同分卷重复携带，合卷按主键去重；任一工单闭包单独超容则报出单号且整批不发卷。
+
+每卷自带批次、卷号、总卷数和三段 SHA-256，因此源卷不在馆里也能乱序逐卷核验、复原。`VolumeReceiver` 会拒收异批卷，按「批次 + 卷号 + 摘要」幂等收卷，重试不重复入账，并在结果中给出 `missing_volumes`。收齐后调用 `reconcile_volumes`，与同范围整卷记录或整卷三段摘要逐段对账。HTTP 兼容入口为 `/volumes/plan`、`/volumes/receive`、`/volumes/reconcile`（另有 `/archive-volumes` 等近义前缀）。
+
+后端纯领域测试可运行：
+
+```sh
+PYTHONPATH=backend python -m pytest backend/tests/test_split_archive_volumes.py -q
+```
+
 [MIT License](LICENSE)

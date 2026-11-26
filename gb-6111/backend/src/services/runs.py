@@ -25,12 +25,13 @@ def list_entries(db):
     return [dict(row) for row in db.execute(query().order_by(runs.c.id.desc()).limit(100)).mappings()]
 
 
-def enqueue(db, case_id, parameter, actor):
+def enqueue(db, case_id, parameter, actor, capacity=None, batch_id=None):
     if parameter > CONFIG["max_parameter"]:
         raise HTTPException(422, f"参数不能超过 {CONFIG['max_parameter']}")
     case_service.get(db, case_id)
     change = db.execute(insert(runs).values(
-        case_id=case_id, status=JobState.QUEUED, parameter=parameter, actor=actor, created_at=int(time())
+        case_id=case_id, status=JobState.QUEUED, parameter=parameter, capacity=capacity,
+        batch_id=batch_id, actor=actor, created_at=int(time())
     ))
     run_id = change.inserted_primary_key[0]
     audit.record(db, "enqueue", actor, "run", run_id)

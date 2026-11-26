@@ -11,9 +11,15 @@ function queueForm(config, selected) {
     field(config.parameter_label, el("input", {
       name: "parameter", type: "number", min: 1, max: config.max_parameter, required: true, value: config.default_parameter,
     })),
+    field("单卷容量字节（可选）", el("input", {
+      name: "capacity", type: "number", min: 1, placeholder: "按三段 COPY 实际字节装卷",
+    }), "留空则维持整卷；填写后维修单和全部测记不拆分，琴体可随分卷重带。"),
     el("button", {type: "submit"}, "提交执行"), errorText());
   submit(form, async values => {
-    const run = await api.enqueue(selected.id, {parameter: Number(values.get("parameter"))});
+    const capacityText = values.get("capacity");
+    const body = {parameter: Number(values.get("parameter"))};
+    if (capacityText) body.capacity = Number(capacityText);
+    const run = await api.enqueue(selected.id, body);
     navigate(`runs/${run.id}`);
   });
   return form;

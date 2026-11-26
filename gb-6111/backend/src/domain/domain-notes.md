@@ -7,3 +7,16 @@
 先按请求顺序取上限内的工单，把父琴体与其所有子测记一并选中。PostgreSQL COPY 以主键 C 排序流出 UTF-8 CSV，每段计算 SHA-256。全部段校验通过后才按外键顺序还原。校验报告重新导出目标表并对照原始段摘要。
 
 范围为应用演练中的逻辑数据卷。以数据库隔离临时表核验，数据库事务结束后自动清除，不提供整库 DDL、角色、物理 WAL 或生产恢复编排。
+
+## 容量分卷与收卷
+
+`src/domain/volumes.py` 提供离线可测的分卷协议：
+
+- 按 `requested` 顺序贪心装卷，容量按每卷 `organs`、`visits`、`readings` 三段 COPY 兼容 CSV 的实际 UTF-8 字节总和计算。
+- 一张维修单的工单及其全部测记必须在同一卷；该单引用的琴体只在本卷琴体段出现一次。若同一琴体被不同分卷携带，允许重复，合卷/入库时按主键去重。
+- 单单闭包仍超容量时抛出 `OversizedRepairOrder` 并带单号；非严格入口返回 `blocked` 计划，且 `volumes=[]`，表示整批暂不发卷。
+- 每卷自带批次号、卷号、总卷数、三段数据和 SHA-256。`VolumeReceiver` 不依赖源卷，支持乱序接收、逐卷核验和复原；异批卷抛 `BatchMismatchError`。
+- `(batch_id, volume_number, fingerprint)` 回执保证重试幂等：重复卷返回 `duplicate=True`、新增行数为 0，不重复入账；同卷号但摘要变化按冲突拒收。
+- 回执给出 `missing_volumes`；收齐后用 `reconcile_volumes` 与同范围整卷记录、整卷段或摘要表逐段对账。
+
+HTTP 兼容入口挂在 `/volumes`、`/archive-volumes`、`/volume-batches` 等前缀下；持久回执表为 `volume_receipts`。
